@@ -1,0 +1,119 @@
+---
+title: 'Coursera: Practical ML'
+author: "Jack Fiskum"
+date: "5/11/2020"
+output: html_document
+---
+
+
+#Packages, Data Import, and Cleaning
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#libraries
+library(randomForest)
+library(tidyverse)
+library(caret)
+library(rsample)
+```
+
+```{r}
+#import data
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+evaluating <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+training$classe <- factor(training$classe)
+
+#get complete variables for the data we need to predict on
+varnames <- names(evaluating[,complete.cases(t(evaluating))])
+
+#subset our data down to those variables
+training <- training[,(names(training) %in% c(varnames,"classe"))]
+evaluating <- evaluating[,(names(evaluating) %in% varnames)]
+
+#delete columns that have no meaning
+training[,c("X","user_name")] <- NULL
+evaluating[,c("X","user_name","problem_id")] <- NULL
+
+#Assign our complete cases
+training <- training[complete.cases(training),]
+```
+
+
+
+#Summary
+We first defined a hold out set that was 20% of the training data, saving this data to the end of the model-building process in order to evaluate our out-of-sample error.  We used the remaining 80% of the training data for the model-building process.  To build the model, we attempted K-fold cross validation, splitting this 80% of the training data into 5 individual testing sets.  The model we chose to build was a random forest classifier consisting of 100 trees.  We chose this due to computational needs and for the consistent accuracy of the random forest.  Through cross validation, we acheived a mean-predictive-accuracy of 99.78%, and upon fitting a model with these parameters on the CV set and testing its predictive accuracy on the initial hold out set, we estimated our out-of-sample error rate to be 0.08%.
+
+
+
+#Create Initial Holdout set
+Since we wish to evaluate the out of sample error of the model we will end up fitting, we will first divide our data into a training set for cross validation, and a validation set for estimating the OOS Error.
+```{r}
+#Create data splits
+set.seed(853)
+trainIndex <- createDataPartition(y=training$classe, p=.80, list = FALSE)
+
+#Specify Training and Validation sets
+train <- training[trainIndex,]       #Will use this for cross validation
+validation <- training[-trainIndex,] #Will use this to estimate our out of sample error
+```
+
+
+
+#Cross Validation for random forest building
+We will first create a Cross validation object.  Since random forests are incredible tools for classification, we will utilize this model.  Running through 5 folds of the data, we will train five random forest models comprised of 100 trees and evaluate their predictive accuracy on five testing sets.
+```{r}
+set.seed(849)
+#Create CV Folds
+cvIndexes <- vfold_cv(data = train, v = 5, strata = "classe")
+
+accs <- numeric()
+
+#For Each Fold
+for (i in 1:5){
+   #Set Indexes
+   train_indexes <- cvIndexes[["splits"]][[i]][["in_id"]]
+   
+   #Specify data sets
+   x_train <- train[train_indexes, !(names(train) %in% c("classe"))]
+   y_train <- train[train_indexes, (names(train) %in% c("classe"))]
+   x_test <- train[-train_indexes, !names(train) %in% c("classe")]
+   y_test <- train[-train_indexes, (names(train) %in% c("classe"))]
+   
+   #Train Model with those indexes
+   rf <- randomForest(x=x_train, 
+                   y=y_train,
+                   ntree=100)
+   
+   #Predict on indexes that are outside that training set
+   preds <- predict(object = rf, x_test)
+   
+   #Score on the actual values of those indexes
+   accs <- c(accs, confusionMatrix(data = preds, reference = y_test)[["overall"]][["Accuracy"]])
+}
+
+#Display predictive accuracy through the five folds
+accs
+mean(accs)
+```
+
+
+
+#Out of Sample Error Estimation
+Now that we've determined a random forest classifier with 100 trees seems to be a suitable model to fit to our data, we will now train a model with our cross-validation set and test its predictive accuracy on our initial hold out set to estimate the out of sample error
+```{r}
+train_x <- train[,!(names(train) %in% c("classe"))]
+train_y <- train$classe
+test_x <- validation[,!names(validation) %in% c("classe")]
+test_y <- validation$classe
+
+rf <- randomForest(x=train_x, y=train_y, ntree=100)
+preds <- predict(rf, test_x)
+confusionMatrix(data = preds, reference = test_y)
+```
+
+#Predictions
+```{r}
+final_preds <- predict(rf, evaluating)
+final_preds
+```
+
